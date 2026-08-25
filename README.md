@@ -166,10 +166,15 @@ make test
 |------|----------|
 | `mock` | Canned, offline, deterministic (default — demo-safe) |
 | `replay` | Reuse cached agent outputs from a prior run |
-| `live` | Real provider calls (`anthropic`/`openai`); falls back safely on error |
+| `live` | Real provider calls (`anthropic`/`openai`); the implementer asks the model to rewrite `target-app/main.py` from the approved design, falling back to the known-good hardcoded implementation if the call errors or the response isn't valid code |
 
 This keeps `make demo` runnable with **no key and no network**, and doubles as a
 reproducibility feature.
+
+`live` mode needs `LLM_API_KEY` set in `.env` (`LLM_PROVIDER`/`LLM_MODEL` pick the
+provider + model). Other agents still call the LLM for rationale text but keep
+deterministic, templated artifacts — only the implementer's generated code is
+LLM-authored, and only when the call succeeds.
 
 ---
 
@@ -178,7 +183,10 @@ reproducibility feature.
 - **Custom engine over a framework (LangGraph, etc.):** chosen for explainability
   and defensibility of the control flow, at the cost of some built-in features.
 - **Mock agents by default:** artifacts are representative, not LLM-authored,
-  unless `LLM_MODE=live`. This is a deliberate demo-reliability trade-off.
+  unless `LLM_MODE=live` — and even then only the implementer's
+  `target-app/main.py` is LLM-authored; other agents' artifacts stay
+  deterministic/templated so they remain reviewable. This is a deliberate
+  demo-reliability trade-off.
 - **In-memory rate limiting** in the target app is per-process (fine for a
   prototype; use Redis for multi-instance).
 - **Re-planning** resets/re-runs affected nodes rather than diffing artifacts —
@@ -206,8 +214,45 @@ agentic-sdlc/
 
 ## Setup (Docker, clean-room path)
 
+Guarantees the prototype runs regardless of host machine/Python version — no
+local venv needed. Native `make setup && make demo` remains the primary path;
+Docker is insurance.
+
 ```bash
 docker compose up      # orchestrator demo + dashboard(:8000) + target-app(:8080)
 ```
 
-Native `make setup && make demo` remains the primary path; Docker is insurance.
+One image (`agentic-sdlc:latest`) is built and run as three services:
+
+| Service | Command it runs | Port | Notes |
+|---------|------------------|------|-------|
+| `orchestrator` | `orchestrator demo --scenarios greenfield,brownfield,ambiguous` | — | Runs all 3 scenarios once, then exits |
+| `dashboard` | `dashboard` | `8000` | Approvals + live metrics + audit view |
+| `target-app` | `uvicorn target-app.main:app --host 0.0.0.0 --port 8080` | `8080` | The URL shortener the agents produced |
+
+Useful variants:
+
+```bash
+# Run a single scenario instead of the default demo
+docker compose run --rm orchestrator orchestrator run --req workspace/requirements/REQ-002-brownfield.yaml
+
+# Resume after approving a gate (workspace/runs/<id>/approvals/APR-*.json)
+docker compose run --rm orchestrator orchestrator resume --run <id>
+
+# Just the dashboard + target-app, without re-running the demo
+docker compose up dashboard target-app
+
+# Rebuild after changing orchestrator/agents/ui code (baked into the image)
+docker compose build
+
+# Tear down (the workspace volume keeps runs/artifacts/audit log)
+docker compose down
+```
+
+**Live LLM mode in Docker:** set `LLM_MODE=live` and `LLM_API_KEY=...` in `.env`
+(`env_file: .env` wires it into the `orchestrator` and `dashboard` services).
+`target-app` is bind-mounted (`./target-app:/app/target-app`), so code the
+implementer regenerates lands on the host too — restart the `target-app`
+service (`docker compose restart target-app`) to pick it up. `workspace` is a
+named volume shared by all services, so runs, artifacts, approvals, and the
+audit log persist across `docker compose up` runs.

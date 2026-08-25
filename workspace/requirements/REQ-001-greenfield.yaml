@@ -1,0 +1,12 @@
+id: REQ-001
+type: greenfield
+title: "Build URL shortener core"
+intent: "Users can shorten a URL and be redirected via the short code, with basic analytics."
+acceptance:
+  - "POST /shorten returns a unique short code"
+  - "GET /{code} redirects to the original URL"
+  - "GET /{code}/stats returns click count"
+constraints:
+  - "No external paid services"
+  - "Runs locally with SQLite"
+status: approved

@@ -1,0 +1,45 @@
+[project]
+name = "agentic-sdlc"
+version = "0.1.0"
+description = "An agentic, governed SDLC orchestration engine that turns requirements into reviewable engineering outcomes. Target system: a URL shortener."
+requires-python = ">=3.11"
+readme = "README.md"
+
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+    "watchdog>=4.0",
+    "sqlalchemy>=2.0",
+    "httpx>=0.27",
+    # LLM providers are optional at runtime: the engine falls back to mock/replay
+    # if these are absent or LLM_MODE != live.
+    "anthropic>=0.25; extra == 'live'",
+    "openai>=1.30; extra == 'live'",
+]
+
+[project.optional-dependencies]
+live = ["anthropic>=0.25", "openai>=1.30"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
+
+[project.scripts]
+orchestrator = "orchestrator.cli:app"
+dashboard = "ui.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["orchestrator", "agents", "ui"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["orchestrator/tests", "target-app/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

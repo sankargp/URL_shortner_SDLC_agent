@@ -1,0 +1,43 @@
+# Policy guardrails evaluated as gate conditions during orchestration.
+# These encode security, compliance, and change-control rules.
+
+security:
+  - id: no_secrets_in_code
+    description: "Generated artifacts must not contain hardcoded secrets/keys."
+    severity: high
+    action: block
+  - id: input_validation
+    description: "All external inputs (URLs) must be validated before persistence."
+    severity: medium
+    action: warn
+
+change_control:
+  - id: schema_change_requires_approval
+    description: "Any data-schema/migration change requires human approval."
+    severity: high
+    action: require_approval
+  - id: release_requires_signoff
+    description: "Release readiness requires explicit human sign-off."
+    severity: high
+    action: require_approval
+
+compliance:
+  - id: audit_trail
+    description: "Every state transition and decision must be recorded in audit.log."
+    severity: high
+    action: enforce
+
+autonomy_boundary:
+  # What agents may do unattended vs. what must escalate to a human.
+  unattended:
+    - requirements_normalization
+    - design_for_greenfield
+    - code_generation
+    - test_generation
+    - documentation
+  requires_human:
+    - schema_change
+    - merge
+    - release
+    - ambiguity_resolution
+    - policy_violation

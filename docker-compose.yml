@@ -1,0 +1,36 @@
+# Clean-room path: guarantees the prototype runs regardless of host machine.
+# Native `make setup && make demo` remains the primary path; this is insurance.
+
+services:
+  orchestrator:
+    build: .
+    image: agentic-sdlc:latest
+    command: orchestrator demo --scenarios greenfield,brownfield,ambiguous
+    env_file: .env
+    environment:
+      - LLM_MODE=${LLM_MODE:-mock}   # runs offline by default
+    volumes:
+      - workspace:/app/workspace
+      - ./target-app:/app/target-app
+
+  dashboard:
+    image: agentic-sdlc:latest
+    build: .
+    command: dashboard
+    env_file: .env
+    ports:
+      - "8000:8000"                  # approvals + live metrics
+    volumes:
+      - workspace:/app/workspace
+
+  target-app:
+    image: agentic-sdlc:latest
+    build: .
+    command: uvicorn target-app.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"                  # the built URL shortener
+    volumes:
+      - ./target-app:/app/target-app
+
+volumes:
+  workspace:                         # shared: runs, artifacts, audit logs, metrics

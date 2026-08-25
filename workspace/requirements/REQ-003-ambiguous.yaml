@@ -1,0 +1,11 @@
+id: REQ-003
+type: ambiguous
+title: "Make the service more reliable"
+intent: "Make the URL shortener 'more reliable'."   # deliberately under-specified
+acceptance: []                                       # to be clarified at the human gate
+possible_interpretations:
+  - "Add rate limiting to protect against abuse"
+  - "Add a caching layer for hot redirects"
+  - "Add retries + circuit breaker on the datastore"
+  - "Define and measure SLOs (availability, p99 latency)"
+status: proposed

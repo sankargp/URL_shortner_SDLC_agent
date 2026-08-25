@@ -1,0 +1,15 @@
+id: REQ-002
+type: brownfield
+title: "Add custom aliases and link expiry"
+intent: "Enhance the existing shortener so users can request a custom alias and set an expiry."
+acceptance:
+  - "POST /shorten accepts optional custom_alias"
+  - "POST /shorten accepts optional expiry_days"
+  - "Expired links return 410 Gone"
+  - "Existing short codes remain valid (no regression)"
+constraints:
+  - "Backward compatible API"
+impacted_hint:
+  - "links table schema"
+  - "shorten + redirect handlers"
+status: approved

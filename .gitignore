@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.db
+# Keep sample runs out of git, but preserve the folder + requirement files.
+workspace/runs/*
+!workspace/runs/.gitkeep
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/

@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 *.db
+*.db-shm
+*.db-wal
 # Keep sample runs out of git, but preserve the folder + requirement files.
 workspace/runs/*
 !workspace/runs/.gitkeep
@@ -11,3 +13,9 @@ workspace/runs/*
 *.egg-info/
 dist/
 build/
+video/demo_capture.mjs
+video/narration.txt
+video/output/
+video/create_voiceover.ps1
+video/compose_video.mjs
+video/captions.srt

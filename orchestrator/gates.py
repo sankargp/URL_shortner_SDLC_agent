@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
 from typing import Any
 
-from .state import Node, Gate
 from .context import RunStore
+from .state import Node
 
 
 # Node impact levels that force a human checkpoint. Sourced from REQUIRE_APPROVAL_FOR.
@@ -66,8 +65,22 @@ def decide(store: RunStore, approval_id: str, decision: str, by: str = "human") 
     return data
 
 
+def supersede_pending_approvals(store: RunStore, reason: str) -> None:
+    """Close approval questions invalidated by a governed re-plan."""
+    for path in sorted(store.approvals.glob("APR-*.json")):
+        data = json.loads(path.read_text())
+        if data.get("status") != "pending":
+            continue
+        data["status"] = "superseded"
+        data["decided_by"] = "orchestrator"
+        data["decided_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        data["superseded_reason"] = reason
+        path.write_text(json.dumps(data, indent=2))
+        store.audit("approval_superseded", approval=data.get("id"), reason=reason)
+
+
 def approval_for_node(store: RunStore, node_id: str) -> dict | None:
-    for p in sorted(store.approvals.glob("APR-*.json")):
+    for p in sorted(store.approvals.glob("APR-*.json"), reverse=True):
         data = json.loads(p.read_text())
         if data.get("node") == node_id:
             return data

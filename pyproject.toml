@@ -8,6 +8,7 @@ readme = "README.md"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
     "pydantic>=2.6",
     "typer>=0.12",
     "rich>=13.7",
@@ -38,8 +39,17 @@ packages = ["orchestrator", "agents", "ui"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["orchestrator/tests", "target-app/tests"]
+testpaths = ["orchestrator/tests", "target-app/tests", "ui/tests"]
+markers = [
+    "profile_core: core URL-shortener acceptance tests",
+    "profile_alias_expiry: custom-alias and expiry acceptance tests",
+    "profile_password: password-protection acceptance tests",
+    "profile_bulk: bulk and idempotency acceptance tests",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+"target-app/__init__.py" = ["N999"]

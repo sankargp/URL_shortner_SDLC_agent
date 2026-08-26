@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
-from .state import Run, Node
+from .state import Run
 
 
 class RunStore:
@@ -19,6 +21,7 @@ class RunStore:
     def __init__(self, run_id: str, workspace_dir: str = "workspace"):
         self.run_id = run_id
         self.root = Path(workspace_dir) / "runs" / run_id
+        self._io_lock = threading.RLock()
         self.artifacts = self.root / "artifacts"
         self.approvals = self.root / "approvals"
         for p in (self.artifacts, self.approvals):
@@ -27,29 +30,31 @@ class RunStore:
     # ---- audit log (append-only) -----------------------------------------
     def audit(self, event: str, **fields: Any) -> None:
         rec = {"ts": time.time(), "iso": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, **fields}
-        with open(self.root / "audit.log", "a") as f:
+        with self._io_lock, open(self.root / "audit.log", "a") as f:
             f.write(json.dumps(rec) + "\n")
 
     # ---- blackboard / shared context -------------------------------------
     def write_context(self, key: str, value: Any) -> None:
-        ctx = self.read_context()
-        ctx[key] = value
-        self._dump("context.json", ctx)
+        with self._io_lock:
+            ctx = self.read_context()
+            ctx[key] = value
+            self._dump("context.json", ctx)
 
     def read_context(self) -> dict[str, Any]:
         return self._load("context.json", {})
 
     # ---- decision lineage -------------------------------------------------
     def record_lineage(self, artifact: str, from_requirement: str, node: str, rationale: str) -> None:
-        lin = self._load("lineage.json", [])
-        lin.append({
-            "artifact": artifact,
-            "from_requirement": from_requirement,
-            "produced_by_node": node,
-            "rationale": rationale,
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        })
-        self._dump("lineage.json", lin)
+        with self._io_lock:
+            lin = self._load("lineage.json", [])
+            lin.append({
+                "artifact": artifact,
+                "from_requirement": from_requirement,
+                "produced_by_node": node,
+                "rationale": rationale,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            self._dump("lineage.json", lin)
 
     # ---- run state --------------------------------------------------------
     def save_run(self, run: Run) -> None:
@@ -71,13 +76,21 @@ class RunStore:
 
     # ---- helpers ----------------------------------------------------------
     def _dump(self, name: str, obj: Any) -> None:
-        (self.root / name).write_text(json.dumps(obj, indent=2))
+        with self._io_lock:
+            destination = self.root / name
+            temporary = self.root / f".{name}.{uuid.uuid4().hex}.tmp"
+            try:
+                temporary.write_text(json.dumps(obj, indent=2))
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def _load(self, name: str, default: Any) -> Any:
-        p = self.root / name
-        if p.exists():
-            return json.loads(p.read_text())
-        return default
+        with self._io_lock:
+            p = self.root / name
+            if p.exists():
+                return json.loads(p.read_text())
+            return default
 
 
 def latest_run(workspace_dir: str = "workspace") -> str | None:
@@ -88,3 +101,20 @@ def latest_run(workspace_dir: str = "workspace") -> str | None:
     if not runs:
         return None
     return max(runs, key=lambda d: os.path.getmtime(d)).name
+
+
+def attempted_requirement_ids(workspace_dir: str = "workspace") -> set[str]:
+    """Requirement ids that already have at least one run (any outcome)."""
+    runs_dir = Path(workspace_dir) / "runs"
+    ids: set[str] = set()
+    if not runs_dir.exists():
+        return ids
+    for d in runs_dir.iterdir():
+        state = d / "state.json"
+        if not state.exists():
+            continue
+        try:
+            ids.add(json.loads(state.read_text())["requirement_id"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return ids

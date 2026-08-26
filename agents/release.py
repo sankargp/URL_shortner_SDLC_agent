@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from .base import Agent, llm
 
 
@@ -11,11 +12,16 @@ class ReleaseAgent(Agent):
 
     def run(self, *, node, run, context: dict[str, Any], store) -> dict[str, Any]:
         llm("Assess release readiness.", system=self.system_prompt)
+        publication = context.get("publication") or {}
         checklist = {
             "tests_green": bool(context.get("test_report")),
             "docs_present": bool(context.get("docs_path")),
             "schema_reviewed": run.scenario != "brownfield" or True,
             "policy_guardrails": "passed",
+            "publication_ready": (
+                not context.get("publish_changes")
+                or publication.get("outcome") in {"pr_opened", "no_changes"}
+            ),
         }
         art = store.write_artifact("release/readiness.json", str(checklist))
         return {

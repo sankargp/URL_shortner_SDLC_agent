@@ -17,22 +17,37 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
 
-from .state import Run, Node, NodeState, can_transition
-from .context import RunStore
-from .gates import approval_required, open_approval, approval_for_node
-from .metrics import compute
 from agents import registry
+
+from .context import RunStore
+from .gates import (
+    approval_for_node,
+    approval_required,
+    open_approval,
+    supersede_pending_approvals,
+)
+from .metrics import compute
+from .requirements_store import ExecutionStatus, RequirementsRepositoryProtocol
+from .state import Node, NodeState, Run, can_transition
 
 
 class Kernel:
-    def __init__(self, run: Run, store: RunStore, config: dict | None = None):
+    def __init__(
+        self,
+        run: Run,
+        store: RunStore,
+        config: dict | None = None,
+        *,
+        requirements_repository: RequirementsRepositoryProtocol | None = None,
+    ):
         self.run = run
         self.store = store
         self.config = config or {}
-        self.max_retries = int(self.config.get("MAX_RETRIES", os.getenv("MAX_RETRIES", 2)))
+        self.requirements_repository = requirements_repository
+        self.max_retries = int(self.config.get("MAX_RETRIES", os.getenv("MAX_RETRIES", "2")))
         self.require_for = self.config.get(
             "REQUIRE_APPROVAL_FOR",
             os.getenv("REQUIRE_APPROVAL_FOR", "schema_change,release,merge,ambiguity,policy_violation"),
@@ -73,7 +88,7 @@ class Kernel:
             for n in ready:
                 groups.setdefault(n.parallel_group or n.id, []).append(n)
 
-            for _, batch in groups.items():
+            for batch in groups.values():
                 if len(batch) == 1:
                     self._execute(batch[0])
                 else:
@@ -89,16 +104,25 @@ class Kernel:
     def _execute(self, node: Node) -> None:
         # Entry approval gate (autonomy boundary).
         if approval_required(node, self.require_for) and not self._approved(node):
-            self._transition(node, NodeState.RUNNING)  # briefly enter to produce a proposal
-            proposal = self._run_agent(node)           # agent produces artifact + rationale
-            self._transition(
-                node, NodeState.AWAITING_APPROVAL, reason="high_impact_checkpoint"
-            )
-            open_approval(
-                self.store, node,
-                question=(node.entry_gate.prompt if node.entry_gate else f"Approve {node.title}?"),
-                context={"proposal": proposal},
-            )
+            node.attempts += 1
+            node.started_at = node.started_at or time.time()
+            self._transition(node, NodeState.RUNNING, attempt=node.attempts)
+            try:
+                proposal = self._run_agent(node)
+                self._transition(
+                    node, NodeState.AWAITING_APPROVAL, reason="high_impact_checkpoint"
+                )
+                open_approval(
+                    self.store,
+                    node,
+                    question=(
+                        node.entry_gate.prompt if node.entry_gate else f"Approve {node.title}?"
+                    ),
+                    context={"proposal": proposal},
+                )
+            except Exception as exc:  # noqa: BLE001 - bounded and safe-stopped below
+                node.ended_at = time.time()
+                self._handle_failure(node, reason=f"exception:{exc}")
             return
 
         node.attempts += 1
@@ -136,6 +160,21 @@ class Kernel:
             self._transition(node, NodeState.ROLLED_BACK, reason="exhausted_retries")
             self.store.audit("rollback", node=node.id)
             self._transition(node, NodeState.STOPPED, reason="safe_stop")
+            self._cascade_skip_unreachable()
+
+    # ---- unreachable-node cleanup ------------------------------------------
+    def _cascade_skip_unreachable(self) -> None:
+        """A node that will never run (stopped, rolled back) means anything
+        depending on it can never become ready either. Skip those dependents so
+        the run reaches a real terminal state instead of blocking forever."""
+        dead = {NodeState.STOPPED, NodeState.ROLLED_BACK, NodeState.SKIPPED}
+        changed = True
+        while changed:
+            changed = False
+            for n in self.run.nodes.values():
+                if n.state == NodeState.PENDING and any(self.run.nodes[d].state in dead for d in n.depends_on):
+                    self._transition(n, NodeState.SKIPPED, reason="upstream_stopped")
+                    changed = True
 
     # ---- approvals + resume ----------------------------------------------
     def _approved(self, node: Node) -> bool:
@@ -152,24 +191,38 @@ class Kernel:
                 continue
             if apr["status"] == "approve":
                 self._transition(node, NodeState.RUNNING, via="approval")
-                out = self._run_agent(node)
-                node.outputs.update(out)
-                node.ended_at = time.time()
-                self._transition(node, NodeState.PASSED)
-                self.store.record_lineage(
-                    out.get("artifact", node.id), self.run.requirement_id, node.id,
-                    out.get("rationale", "approved by human"),
-                )
+                try:
+                    out = self._run_agent(node)
+                    node.outputs.update(out)
+                    node.ended_at = time.time()
+                    self._transition(node, NodeState.PASSED)
+                    self.store.record_lineage(
+                        out.get("artifact", node.id),
+                        self.run.requirement_id,
+                        node.id,
+                        out.get("rationale", "approved by human"),
+                    )
+                except Exception as exc:  # noqa: BLE001 - bounded and safe-stopped below
+                    node.ended_at = time.time()
+                    self._handle_failure(node, reason=f"exception:{exc}")
             elif apr["status"] == "reject":
                 self._transition(node, NodeState.FAILED, via="rejection")
                 self._transition(node, NodeState.ROLLED_BACK, reason="human_rejected")
                 self._transition(node, NodeState.STOPPED, reason="safe_stop")
+                self._cascade_skip_unreachable()
         return self.run_until_blocked()
 
     # ---- re-planning ------------------------------------------------------
     def replan(self, changed_requirement_id: str, planner: Callable[[Run], None]) -> str:
         """Invalidate downstream nodes affected by an upstream change and re-run."""
         self.store.audit("replan_triggered", requirement=changed_requirement_id)
+        for node in self.run.nodes.values():
+            if node.state == NodeState.AWAITING_APPROVAL:
+                self._transition(node, NodeState.PENDING, reason="approval_invalidated_by_replan")
+        supersede_pending_approvals(
+            self.store,
+            reason=f"requirement {changed_requirement_id} was re-planned",
+        )
         # Naive-but-explicit strategy: reset PASSED nodes from 'requirements' stage
         # forward to PENDING so their dependents re-execute with new context.
         for node in self.run.nodes.values():
@@ -202,3 +255,17 @@ class Kernel:
         m = compute(self.run, self.store.root)
         self.store.audit("metrics", **m)
         self.store.save_run(self.run)
+        if self.requirements_repository is not None:
+            if any(node.state == NodeState.STOPPED for node in self.run.nodes.values()):
+                status = ExecutionStatus.STOPPED
+            elif self.run.is_blocked():
+                status = ExecutionStatus.AWAITING_APPROVAL
+            elif self.run.is_complete():
+                status = ExecutionStatus.IMPLEMENTED
+            else:
+                status = ExecutionStatus.IN_PROGRESS
+            self.requirements_repository.sync_execution(
+                self.run.requirement_id,
+                self.run.id,
+                status,
+            )

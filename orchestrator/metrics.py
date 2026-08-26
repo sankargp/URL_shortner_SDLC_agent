@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .state import Run, NodeState
+from .state import NodeState, Run
 
 
 def compute(run: Run, run_root: Path) -> dict[str, Any]:

@@ -16,8 +16,8 @@ enhances is a **URL shortener**.
 git clone <repo> && cd agentic-sdlc
 make setup                 # venv + deps + .env  (needs Python 3.11+)
 # edit .env to paste an API key, OR leave LLM_MODE=mock to run fully offline
-make demo                  # runs greenfield -> brownfield -> ambiguous
-make dashboard             # open http://localhost:8000 to approve gates + see metrics
+make dashboard             # manage requirements at http://localhost:8000
+make demo                  # explicit forceful demo: greenfield -> brownfield -> ambiguous
 ```
 
 Then serve the built shortener:
@@ -26,8 +26,9 @@ Then serve the built shortener:
 make serve-app             # http://localhost:8080  (POST /shorten, GET /{code})
 ```
 
-**No API key? No network?** Leave `LLM_MODE=mock` in `.env`. The whole pipeline
-runs deterministically offline so the demo never breaks.
+**No API key? No network?** Leave `LLM_MODE=mock` in `.env`. CLI-driven runs and
+the demo remain deterministic and offline. The dashboard's **Implement** action
+is the publishing path and therefore requires GitHub access and `GITHUB_TOKEN`.
 
 > If your environment doesn't expose the console scripts on `PATH`, every command
 > also works as a module: `python -m orchestrator.cli demo`,
@@ -40,16 +41,16 @@ runs deterministically offline so the demo never breaks.
 | Command | What it does | Port |
 |---------|--------------|------|
 | `make demo` | Orchestrator drives the 3 scenarios, pausing at human gates | — |
-| `make dashboard` | Approvals + live reliability metrics + audit log | 8000 |
+| `make dashboard` | Requirements backlog + analysis + approvals + metrics | 8000 |
 | `make serve-app` | The URL shortener the agents produced | 8080 |
-| `make test` | Orchestrator + target-app tests | — |
+| `make test` | Orchestrator + Governance UI + target-app tests | — |
 
 ---
 
 ## Architecture (at a glance)
 
 ```
-Requirement (REQ-*.yaml)
+Requirement (workspace/governance.db)
         │
    ┌────▼─────┐   Planner agent emits an explicit dependency graph (DAG)
    │ Planner  │   + entry/exit gates + parallel groups + lineage
@@ -79,12 +80,13 @@ Requirement (REQ-*.yaml)
 | **State machine** | `orchestrator/state.py` | Node states + legal transitions (guards against silent linear chaining) |
 | **Kernel** | `orchestrator/kernel.py` | Scheduler: parallel/serial execution, gates, retries, rollback, re-plan |
 | **Run store** | `orchestrator/context.py` | Blackboard, decision lineage, append-only audit log, artifacts |
+| **Requirements store** | `orchestrator/requirements_store.py` | Canonical SQLite backlog, analysis, and lifecycle/execution statuses |
 | **Gates** | `orchestrator/gates.py` | Entry/exit + human-approval checkpoints |
 | **Metrics** | `orchestrator/metrics.py` | Success rate, retry/rollback freq, MTTR, e2e latency |
 | **Planner** | `agents/planner.py` | Requirement → DAG (scenario-aware) |
 | **Agents** | `agents/*.py` | requirements, architect, implementer, tester, docs, release |
 | **Policies** | `policies/guardrails.yaml` | Security/compliance/change-control + autonomy boundary |
-| **Dashboard** | `ui/app.py` | Approvals + live metrics + audit view |
+| **Dashboard** | `ui/app.py` | Requirement creation/lifecycle/analysis + approvals + metrics + audit |
 | **Target app** | `target-app/main.py` | The URL shortener (FastAPI + SQLite) |
 
 ---
@@ -99,11 +101,70 @@ Each shows **decomposition → orchestration → validation**.
 | **Brownfield** | `REQ-002` add custom alias + expiry | **Codebase reasoning**: impacted modules, schema change → approval gate, regression focus |
 | **Ambiguous** | `REQ-003` "make it more reliable" | **Ambiguity detection**: engine surfaces interpretations and blocks at a human gate before design |
 
+### Refreshable demo backlog
+
+The Governance backlog can replace duplicate expiry-demo records with two
+distinct, end-to-end brownfield demonstrations:
+
+- **Password-protected short links** — PBKDF2 password hashing, authorization
+  failures, schema/security approval, and backward-compatible public links.
+- **Bulk shortening with idempotent retries** — bounded batches, ordered partial
+  results, persisted response replay, and changed-payload conflict detection.
+
+The refresh is deliberately guarded and creates an online SQLite backup before
+deleting only verified `REQ-004`/`REQ-005` duplicates:
+
+```bash
+orchestrator refresh-demo-requirements --yes
+```
+
+Historical `workspace/runs/` directories are preserved. New requirements begin
+as drafts so a demo can show the full ready → analyze → implement lifecycle.
+
 Run one at a time:
 
 ```bash
-orchestrator run --req workspace/requirements/REQ-002-brownfield.yaml
+orchestrator run --req REQ-002
 ```
+
+The YAML files in `workspace/requirements/` are migration fixtures only. On the
+first repository initialization, missing seed IDs are inserted into
+`workspace/governance.db` without overwriting existing rows. All subsequent
+Governance reads and execution status updates use the database exclusively.
+
+New requirements can be added in the dashboard. They begin as
+`draft/not_started`; marking one ready does not start it. Use the explicit
+Analyze/Retry action to persist structured LLM analysis. Once analysis succeeds,
+use the requirement's Implement action to launch the governed workflow. The
+`orchestrator run --req <id>` command remains available for CLI-driven execution.
+
+### Implement to pull request
+
+The dashboard's **Implement** action discovers the current Git repository, uses
+`origin` (or the only configured remote), and takes the current branch as its
+base. It immediately marks the requirement in progress, then runs the governed
+workflow in the background against an isolated clone under
+`workspace/runs/<run-id>/repository`. Uncommitted source-checkout changes are
+never copied, staged, or modified.
+
+Configure a repository-scoped fine-grained GitHub token with **Contents: write**
+and **Pull requests: write**:
+
+```bash
+GITHUB_TOKEN=github_pat_...
+# Optional overrides:
+SOURCE_REPO_PATH=.
+GIT_REMOTE_NAME=
+GIT_BASE_BRANCH=
+IMPLEMENT_WORKERS=2
+```
+
+The source base commit must match the selected remote branch. After tests and
+documentation complete, the workflow commits to
+`agentic/<requirement-id>-<run-id>`, pushes the branch, opens a normal PR, and
+then pauses at release sign-off. A no-diff implementation is recorded as
+"No changes required" without creating an empty PR. Rejected sign-off leaves
+the branch and PR open for investigation.
 
 ---
 
@@ -127,7 +188,7 @@ orchestrator run --req workspace/requirements/REQ-002-brownfield.yaml
 orchestrator resume --run <id>
 
 # Re-plan after a requirement change:
-orchestrator replan --run <id> --req workspace/requirements/REQ-001-greenfield.yaml
+orchestrator replan --run <id> --req REQ-001
 ```
 
 ---
@@ -149,8 +210,17 @@ Defined explicitly in `policies/guardrails.yaml`:
   (`orchestrator/tests/`).
 - **Integration** — target-app shorten/redirect/stats + validation
   (`target-app/tests/`).
+- **Governance UI** — backlog ordering, creation, lifecycle guards, analysis,
+  escaping, and exact-run approval routing (`ui/tests/`).
 - **Acceptance** — modeled as node **exit gates**; a failing gate drives the
   bounded-retry path.
+
+Known demo requirements resolve to deterministic profiles in mock/replay mode.
+Those profiles drive requirement-specific architecture, a validated cumulative
+target-app template, and exact pytest node IDs. The tester records real pytest
+and JUnit results; unsupported offline requirements safe-stop instead of
+reporting fabricated success. Live mode may generate source, but syntax-invalid
+output is rejected before atomic replacement of the existing application.
 
 ```bash
 make test
@@ -191,7 +261,9 @@ LLM-authored, and only when the call succeeds.
   prototype; use Redis for multi-instance).
 - **Re-planning** resets/re-runs affected nodes rather than diffing artifacts —
   correct and governed, but coarser than a production impact-diff.
-- **Single-run dashboard:** shows the latest run; multi-run history is out of scope.
+- **File-based run history:** requirement records and statuses are in SQLite,
+  while detailed node state, artifacts, approvals, lineage, and audit logs remain
+  under `workspace/runs/`.
 
 ---
 
@@ -204,7 +276,7 @@ agentic-sdlc/
 ├── policies/       # guardrails + autonomy boundary
 ├── ui/             # approval + metrics dashboard
 ├── target-app/     # the URL shortener (FastAPI + SQLite)
-├── workspace/      # requirements + per-run state/artifacts/audit/metrics
+├── workspace/      # governance.db + seed fixtures + per-run state/artifacts/audit/metrics
 ├── pyproject.toml  # deps + console entrypoints (orchestrator, dashboard)
 ├── Makefile        # setup / run / demo / dashboard / test
 └── docker-compose.yml
@@ -216,43 +288,52 @@ agentic-sdlc/
 
 Guarantees the prototype runs regardless of host machine/Python version — no
 local venv needed. Native `make setup && make demo` remains the primary path;
-Docker is insurance.
+Docker is insurance. Normal startup launches only the dashboard and target app;
+orchestration remains a deliberate, manually invoked action.
 
 ```bash
-docker compose up      # orchestrator demo + dashboard(:8000) + target-app(:8080)
+docker compose up      # dashboard(:8000) + target-app(:8080)
 ```
 
 One image (`agentic-sdlc:latest`) is built and run as three services:
 
 | Service | Command it runs | Port | Notes |
 |---------|------------------|------|-------|
-| `orchestrator` | `orchestrator demo --scenarios greenfield,brownfield,ambiguous` | — | Runs all 3 scenarios once, then exits |
-| `dashboard` | `dashboard` | `8000` | Approvals + live metrics + audit view |
+| `orchestrator` | Manual profile; explicit command only | — | Reads requirements from the shared Governance database |
+| `dashboard` | `dashboard` | `8000` | Backlog, asynchronous implementation-to-PR launch, approvals, metrics, and audit |
 | `target-app` | `uvicorn target-app.main:app --host 0.0.0.0 --port 8080` | `8080` | The URL shortener the agents produced |
 
 Useful variants:
 
 ```bash
-# Run a single scenario instead of the default demo
-docker compose run --rm orchestrator orchestrator run --req workspace/requirements/REQ-002-brownfield.yaml
+# Run a ready requirement by database ID
+docker compose run --rm orchestrator orchestrator run --req REQ-002
+
+# Retain the three-scenario demo as an explicit forceful operation
+docker compose run --rm orchestrator orchestrator demo --force
 
 # Resume after approving a gate (workspace/runs/<id>/approvals/APR-*.json)
 docker compose run --rm orchestrator orchestrator resume --run <id>
 
-# Just the dashboard + target-app, without re-running the demo
-docker compose up dashboard target-app
-
 # Rebuild after changing orchestrator/agents/ui code (baked into the image)
 docker compose build
 
-# Tear down (the workspace volume keeps runs/artifacts/audit log)
+# Tear down (the named workspace volume keeps governance.db and run data)
 docker compose down
+
+# Destructive: also deletes governance.db and every persisted requirement/status
+docker compose down -v
 ```
 
 **Live LLM mode in Docker:** set `LLM_MODE=live` and `LLM_API_KEY=...` in `.env`
 (`env_file: .env` wires it into the `orchestrator` and `dashboard` services).
+Set `GITHUB_TOKEN` in the same file to enable the dashboard's Implement action.
+Compose mounts this checkout read-only at `/source-repo`; generated branches are
+built in the persistent workspace clone and pushed through the configured remote.
 `target-app` is bind-mounted (`./target-app:/app/target-app`), so code the
 implementer regenerates lands on the host too — restart the `target-app`
 service (`docker compose restart target-app`) to pick it up. `workspace` is a
-named volume shared by all services, so runs, artifacts, approvals, and the
-audit log persist across `docker compose up` runs.
+named volume shared by all services, so `governance.db`, requirement statuses,
+runs, artifacts, approvals, and audit logs persist across container stops,
+restarts, and ordinary `docker compose down`. Deleting the volume with
+`docker compose down -v` deletes that data.

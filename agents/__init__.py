@@ -9,14 +9,15 @@ Each agent has a bounded role and a uniform contract:
         context_updates (dict)        : cross-stage context to persist
         tags (list, optional)         : hints used for approval routing
 """
-from .base import Agent
-from .requirements import RequirementsAgent
 from .architect import ArchitectAgent
-from .implementer import ImplementerAgent
-from .tester import TesterAgent
+from .base import Agent
 from .docs import DocsAgent
-from .release import ReleaseAgent
+from .implementer import ImplementerAgent
 from .planner import Planner
+from .release import ReleaseAgent
+from .requirements import RequirementsAgent
+from .source_control import CheckoutAgent, PublisherAgent
+from .tester import TesterAgent
 
 _REGISTRY: dict[str, Agent] = {
     "requirements": RequirementsAgent(),
@@ -25,6 +26,8 @@ _REGISTRY: dict[str, Agent] = {
     "tester": TesterAgent(),
     "docs": DocsAgent(),
     "release": ReleaseAgent(),
+    "checkout": CheckoutAgent(),
+    "publisher": PublisherAgent(),
 }
 
 

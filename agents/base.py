@@ -12,15 +12,11 @@ from typing import Any
 
 
 def llm(prompt: str, *, system: str = "", cache_key: str | None = None, max_tokens: int = 1024) -> str:
-    """Return model text. Falls back safely when no provider/key is available."""
+    """Return model text. In live mode, provider errors propagate to the caller —
+    nothing is silently swallowed into a canned fallback string."""
     mode = os.getenv("LLM_MODE", "mock").lower()
     if mode == "live":
-        try:
-            return _live_call(prompt, system, max_tokens)
-        except Exception as exc:
-            # Never let a provider hiccup break the pipeline during a demo, but
-            # keep the failure reason so callers can detect/report a fallback.
-            return f"[live-fallback] {type(exc).__name__}: {exc}"
+        return _live_call(prompt, system, max_tokens)
     # mock / replay: deterministic, offline.
     return f"[{mode}] {system[:40]} :: {prompt[:120]}"
 
@@ -44,7 +40,7 @@ def _live_call(prompt: str, system: str, max_tokens: int) -> str:
     client = openai.OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
         model=os.getenv("LLM_MODEL", "gpt-4o"),
-        max_tokens=max_tokens,
+        max_completion_tokens=max_tokens,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content or ""

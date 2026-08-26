@@ -6,18 +6,24 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml README.md ./
 COPY orchestrator ./orchestrator
 COPY agents ./agents
 COPY ui ./ui
 COPY policies ./policies
 COPY target-app ./target-app
-COPY workspace ./workspace
+COPY workspace/requirements ./workspace/requirements
 
-RUN pip install --upgrade pip && pip install -e .
+RUN mkdir -p ./workspace/runs
+
+RUN pip install --upgrade pip && pip install -e ".[live]"
 
 # Default to offline-safe mode inside the container.
 ENV LLM_MODE=mock
 
-# Reasonable default; compose overrides per-service.
-CMD ["orchestrator", "demo", "--scenarios", "greenfield,brownfield,ambiguous"]
+# Safe default; orchestration is always an explicit command.
+CMD ["orchestrator", "--help"]

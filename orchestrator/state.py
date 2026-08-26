@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -33,7 +33,11 @@ LEGAL_TRANSITIONS: dict[NodeState, set[NodeState]] = {
         NodeState.AWAITING_APPROVAL, NodeState.PASSED, NodeState.FAILED, NodeState.STOPPED,
     },
     NodeState.AWAITING_APPROVAL: {
-        NodeState.RUNNING, NodeState.PASSED, NodeState.FAILED, NodeState.STOPPED,
+        NodeState.PENDING,
+        NodeState.RUNNING,
+        NodeState.PASSED,
+        NodeState.FAILED,
+        NodeState.STOPPED,
     },
     NodeState.FAILED: {NodeState.READY, NodeState.ROLLED_BACK, NodeState.STOPPED},  # READY = retry
     NodeState.PASSED: {NodeState.PENDING, NodeState.SKIPPED},  # PENDING = invalidated by re-plan
@@ -88,7 +92,7 @@ class Run:
     created_at: float = field(default_factory=time.time)
 
     @staticmethod
-    def new(requirement_id: str, scenario: str) -> "Run":
+    def new(requirement_id: str, scenario: str) -> Run:
         rid = f"run-{time.strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:6]}"
         return Run(id=rid, requirement_id=requirement_id, scenario=scenario)
 

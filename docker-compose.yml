@@ -5,23 +5,30 @@ services:
   orchestrator:
     build: .
     image: agentic-sdlc:latest
-    command: orchestrator demo --scenarios greenfield,brownfield,ambiguous
+    command: orchestrator --help
+    profiles: ["manual"]
     env_file: .env
     environment:
       - LLM_MODE=${LLM_MODE:-mock}   # runs offline by default
+      - SOURCE_REPO_PATH=/source-repo
     volumes:
       - workspace:/app/workspace
       - ./target-app:/app/target-app
+      - .:/source-repo:ro
 
   dashboard:
     image: agentic-sdlc:latest
     build: .
     command: dashboard
     env_file: .env
+    environment:
+      - SOURCE_REPO_PATH=/source-repo
     ports:
       - "8000:8000"                  # approvals + live metrics
     volumes:
       - workspace:/app/workspace
+      - ./target-app:/app/target-app
+      - .:/source-repo:ro
 
   target-app:
     image: agentic-sdlc:latest
@@ -33,4 +40,4 @@ services:
       - ./target-app:/app/target-app
 
 volumes:
-  workspace:                         # shared: runs, artifacts, audit logs, metrics
+  workspace:                         # shared: governance.db, runs, artifacts, audit logs, metrics

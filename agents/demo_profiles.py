@@ -28,6 +28,9 @@ _CORE_TESTS = (
     "target-app/tests/test_shortener.py::test_stats_increment",
     "target-app/tests/test_shortener.py::test_invalid_url_rejected",
 )
+# Public alias: the regression suite every requirement's acceptance tests run
+# alongside, including dynamically generated ones with no matching profile.
+CORE_TEST_NODE_IDS = _CORE_TESTS
 
 _PROFILES = {
     "core_shortener": DemoProfile(

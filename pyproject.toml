@@ -46,6 +46,7 @@ markers = [
     "profile_password: password-protection acceptance tests",
     "profile_bulk: bulk and idempotency acceptance tests",
     "profile_preview: link-preview acceptance tests",
+    "profile_generated: acceptance tests authored live by the tester agent",
 ]
 
 [tool.ruff]

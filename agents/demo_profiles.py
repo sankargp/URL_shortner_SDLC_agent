@@ -105,6 +105,22 @@ _PROFILES = {
             "target-app/tests/test_shortener.py::test_batch_rejects_changed_payload_for_key",
         ),
     ),
+    "link_preview": DemoProfile(
+        name="link_preview",
+        architecture={
+            "impacted_modules": ["target-app/main.py"],
+            "api_changes": ["GET /{code}/preview: read-only link metadata, no redirect or click increment"],
+            "regression_risks": ["preview must not redirect or mutate link state"],
+        },
+        tags=(),
+        capabilities=("link_preview",),
+        test_node_ids=_CORE_TESTS
+        + (
+            "target-app/tests/test_shortener.py::test_preview_returns_link_metadata",
+            "target-app/tests/test_shortener.py::test_preview_does_not_redirect_or_increment_clicks",
+            "target-app/tests/test_shortener.py::test_preview_unknown_code_returns_404",
+        ),
+    ),
     "ambiguous_reliability": DemoProfile(
         name="ambiguous_reliability",
         architecture={
@@ -132,6 +148,7 @@ def _matchers(requirement: dict[str, Any]) -> tuple[Callable[[str], bool], ...]:
         lambda text: "alias" in text and "expir" in text,
         lambda text: "password" in text or "protected" in text,
         lambda text: ("bulk" in text or "batch" in text) and "idempoten" in text,
+        lambda text: "preview" in text,
         lambda text: requirement_type == "ambiguous",
     )
 

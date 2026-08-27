@@ -401,3 +401,22 @@ def stats(code: str):
         }
     finally:
         db.close()
+
+
+@app.get("/{code}/preview")
+def preview(code: str):
+    db = Session()
+    try:
+        link = db.query(Link).filter(Link.code == code).first()
+        if link is None:
+            raise HTTPException(status_code=404, detail="not found")
+        return {
+            "code": link.code,
+            "url": link.url,
+            "clicks": link.clicks,
+            "created_at": link.created_at.isoformat(),
+            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+            "password_protected": link.password_hash is not None,
+        }
+    finally:
+        db.close()

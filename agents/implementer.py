@@ -74,8 +74,10 @@ class ImplementerAgent(Agent):
         self.template_path = Path(template_path)
 
     def run(self, *, node, run, context: dict[str, Any], store) -> dict[str, Any]:
+        mode = os.getenv("LLM_MODE", "mock").casefold()
         profile_name = context.get("demo_profile")
-        if not profile_name:
+        profile = get_demo_profile(profile_name) if profile_name else None
+        if mode != "live" and profile is None:
             return {
                 "rationale": "No implementation profile was selected.",
                 "exit_ok": False,
@@ -83,13 +85,11 @@ class ImplementerAgent(Agent):
                 "context_updates": {},
             }
 
-        profile = get_demo_profile(profile_name)
         repository = context.get("repository") or {}
         app_path = self.app_path
         if repository.get("path") and not app_path.is_absolute():
             app_path = Path(repository["path"]) / app_path
         existing_source = app_path.read_text(encoding="utf-8") if app_path.exists() else None
-        mode = os.getenv("LLM_MODE", "mock").casefold()
         if mode == "live":
             response = llm(
                 self._build_prompt(run, context.get("design", {}), app_path),
@@ -115,9 +115,9 @@ class ImplementerAgent(Agent):
         )
 
         provenance = {
-            "profile": profile.name,
+            "profile": profile.name if profile else None,
             "mode": mode,
-            "capabilities": list(profile.capabilities),
+            "capabilities": list(profile.capabilities) if profile else [],
             "files": changed_files,
             "sha256": materialized.sha256,
             "error": materialized.error,
@@ -136,9 +136,14 @@ class ImplementerAgent(Agent):
                 "context_updates": {"implementation": provenance},
             }
 
+        rationale = (
+            f"Materialized validated source for {profile.name}."
+            if profile
+            else "Materialized validated source from the model's live design."
+        )
         return {
             "artifact": artifact,
-            "rationale": f"Materialized validated source for {profile.name}.",
+            "rationale": rationale,
             "exit_ok": True,
             "tags": ["merge"],
             "context_updates": {

@@ -45,6 +45,7 @@ markers = [
     "profile_alias_expiry: custom-alias and expiry acceptance tests",
     "profile_password: password-protection acceptance tests",
     "profile_bulk: bulk and idempotency acceptance tests",
+    "profile_preview: link-preview acceptance tests",
 ]
 
 [tool.ruff]

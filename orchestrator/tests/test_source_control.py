@@ -74,6 +74,17 @@ def test_discover_uses_the_only_remote_when_origin_is_absent(tmp_path, monkeypat
     assert config.github_repository == "acme/widget"
 
 
+def test_discover_reports_a_missing_source_repository_not_a_missing_git_binary(
+    tmp_path, monkeypatch
+):
+    missing_source = tmp_path / "missing-source"
+    monkeypatch.setenv("SOURCE_REPO_PATH", str(missing_source))
+    monkeypatch.setenv("GITHUB_TOKEN", "secret-token")
+
+    with pytest.raises(SourceControlError, match="working directory does not exist"):
+        RepositoryConfig.discover()
+
+
 def test_checkout_uses_committed_head_and_leaves_dirty_source_untouched(tmp_path):
     source, remote = _repository(tmp_path)
     tracked = source / "target-app" / "main.py"
@@ -121,6 +132,57 @@ def test_checkout_recovers_when_clone_exists_before_branch_creation(tmp_path):
 
     assert _git(checkout.path, "branch", "--show-current") == "agentic/req-2-run-reco"
     assert _git(checkout.path, "remote", "get-url", "origin") == str(remote)
+
+
+def test_checkout_replaces_an_incomplete_non_git_repository(tmp_path):
+    source, remote = _repository(tmp_path)
+    run_root = tmp_path / "run"
+    incomplete = run_root / "repository"
+    incomplete.mkdir(parents=True)
+    (incomplete / "partial-clone.lock").write_text("interrupted\n")
+
+    checkout = GitWorkspace(_config(source, remote)).checkout(
+        run_root,
+        requirement_id="REQ-3",
+        run_id="run-incomplete",
+    )
+
+    assert (checkout.path / ".git").is_dir()
+    assert not (checkout.path / "partial-clone.lock").exists()
+    assert _git(checkout.path, "branch", "--show-current") == "agentic/req-3-run-inco"
+
+
+def test_checkout_removes_an_interrupted_staging_clone(tmp_path):
+    source, remote = _repository(tmp_path)
+    run_root = tmp_path / "run"
+    staging = run_root / "repository.clone"
+    staging.mkdir(parents=True)
+    (staging / "partial-clone.lock").write_text("interrupted\n")
+
+    checkout = GitWorkspace(_config(source, remote)).checkout(
+        run_root,
+        requirement_id="REQ-4",
+        run_id="run-staging",
+    )
+
+    assert (checkout.path / ".git").is_dir()
+    assert not staging.exists()
+
+
+def test_checkout_with_a_relative_run_root_does_not_nest_the_clone(tmp_path, monkeypatch):
+    source, remote = _repository(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    run_root = Path("workspace") / "runs" / "run-relative"
+
+    checkout = GitWorkspace(_config(source, remote)).checkout(
+        run_root,
+        requirement_id="REQ-5",
+        run_id="run-relative",
+    )
+
+    assert checkout.path == (tmp_path / run_root / "repository").resolve()
+    assert (checkout.path / ".git").is_dir()
+    assert not (tmp_path / run_root / "workspace").exists()
 
 
 class _GitHub:

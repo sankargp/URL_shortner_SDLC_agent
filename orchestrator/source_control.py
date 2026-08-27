@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -39,6 +40,8 @@ def _git(
     token: str = "",
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    if not cwd.is_dir():
+        raise SourceControlError(f"Git working directory does not exist: {cwd}")
     try:
         return subprocess.run(
             ["git", *args],
@@ -140,7 +143,12 @@ class GitWorkspace:
 
     def checkout(self, run_root: Path, *, requirement_id: str, run_id: str) -> Checkout:
         run_root.mkdir(parents=True, exist_ok=True)
+        # Resolve to an absolute path: git subprocess calls run with cwd=run_root,
+        # so a relative destination would be resolved against run_root itself,
+        # nesting the clone under run_root/run_root instead of run_root.
+        run_root = run_root.resolve()
         destination = run_root / "repository"
+        staging = run_root / "repository.clone"
         branch = f"agentic/{_slug(requirement_id)}-{_slug(run_id)[:8]}"
         local_sha = _git(
             self.config.source_root, "rev-parse", self.config.base_branch
@@ -157,21 +165,29 @@ class GitWorkspace:
             raise SourceControlError(
                 f"local base {self.config.base_branch} does not match remote"
             )
+        if destination.exists() and not (destination / ".git").exists():
+            shutil.rmtree(destination)
         if not destination.exists():
-            _git(
-                run_root,
-                "clone",
-                "--no-hardlinks",
-                "--branch",
-                self.config.base_branch,
-                "--single-branch",
-                str(self.config.source_root),
-                str(destination),
-            )
+            if staging.exists():
+                shutil.rmtree(staging)
+            try:
+                _git(
+                    run_root,
+                    "clone",
+                    "--no-hardlinks",
+                    "--branch",
+                    self.config.base_branch,
+                    "--single-branch",
+                    str(self.config.source_root),
+                    str(staging),
+                )
+                staging.replace(destination)
+            except Exception:
+                if staging.exists():
+                    shutil.rmtree(staging)
+                raise
             _git(destination, "remote", "set-url", "origin", self.config.remote_url)
             _git(destination, "switch", "-c", branch)
-        elif not (destination / ".git").exists():
-            raise SourceControlError("the run repository path is not a Git clone")
         else:
             _git(destination, "remote", "set-url", "origin", self.config.remote_url)
             current_branch = _git(destination, "branch", "--show-current").stdout.strip()

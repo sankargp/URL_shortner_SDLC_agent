@@ -10,29 +10,34 @@ enhances is a **URL shortener**.
 
 ---
 
-## Quick start (5 steps)
+## Quick start (Docker)
 
 ```bash
 git clone <repo> && cd agentic-sdlc
-make setup                 # venv + deps + .env  (needs Python 3.11+)
-# edit .env to paste an API key, OR leave LLM_MODE=mock to run fully offline
-make dashboard             # manage requirements at http://localhost:8000
-make demo                  # explicit forceful demo: greenfield -> brownfield -> ambiguous
+cp .env.example .env
+# edit .env with the LLM and GitHub credentials described below, then:
+docker compose up --build -d
+docker compose run --rm orchestrator orchestrator demo --force
 ```
 
-Then serve the built shortener:
+Before starting the dashboard, configure `.env` with an LLM API key, a model
+supported by that provider, and a repository-scoped GitHub token:
 
 ```bash
-make serve-app             # http://localhost:8080  (POST /shorten, GET /{code})
+LLM_MODE=live
+LLM_PROVIDER=anthropic          # anthropic | openai
+LLM_MODEL=<provider-model-name>
+LLM_API_KEY=<provider-api-key>
+GITHUB_TOKEN=<github-token>
 ```
 
-**No API key? No network?** Leave `LLM_MODE=mock` in `.env`. CLI-driven runs and
-the demo remain deterministic and offline. The dashboard's **Implement** action
-is the publishing path and therefore requires GitHub access and `GITHUB_TOKEN`.
+The GitHub token must be a fine-grained token for the repository with
+**Contents: write** and **Pull requests: write** permissions. The checkout must
+also have a Git remote configured; `origin` is used automatically unless
+`GIT_REMOTE_NAME` is set.
 
-> If your environment doesn't expose the console scripts on `PATH`, every command
-> also works as a module: `python -m orchestrator.cli demo`,
-> `python -m uvicorn target-app.main:app --port 8080`, `python -m ui.app`.
+The dashboard is available at `http://localhost:8000`. The built shortener is
+available at `http://localhost:8080` (`POST /shorten`, `GET /{code}`).
 
 ---
 
@@ -40,10 +45,10 @@ is the publishing path and therefore requires GitHub access and `GITHUB_TOKEN`.
 
 | Command | What it does | Port |
 |---------|--------------|------|
-| `make demo` | Orchestrator drives the 3 scenarios, pausing at human gates | — |
-| `make dashboard` | Requirements backlog + analysis + approvals + metrics | 8000 |
-| `make serve-app` | The URL shortener the agents produced | 8080 |
-| `make test` | Orchestrator + Governance UI + target-app tests | — |
+| `docker compose up --build -d` | Starts the requirements dashboard and target app | 8000, 8080 |
+| `docker compose run --rm orchestrator orchestrator demo --force` | Drives the 3 scenarios, pausing at human gates | — |
+| `docker compose run --rm orchestrator orchestrator run --req <id>` | Runs one ready requirement | — |
+| `docker compose run --rm orchestrator sh -c "pip install -e '.[dev]' && pytest"` | Runs orchestrator, Governance UI, and target-app tests | — |
 
 ---
 
@@ -99,7 +104,7 @@ Each shows **decomposition → orchestration → validation**.
 |----------|-------------|----------------------|
 | **Greenfield** | `REQ-001` build core shorten/redirect/stats | Full pipeline from scratch; parallel test‖docs; release sign-off gate |
 | **Brownfield** | `REQ-002` add custom alias + expiry | **Codebase reasoning**: impacted modules, schema change → approval gate, regression focus |
-| **Ambiguous** | `REQ-003` "make it more reliable" | **Ambiguity detection**: engine surfaces interpretations and blocks at a human gate before design |
+| **Ambiguous** | `REQ-003` "improve reliability" | **Ambiguity detection**: engine surfaces interpretations and blocks at a human gate before design |
 
 ### Refreshable demo backlog
 
@@ -215,36 +220,30 @@ Defined explicitly in `policies/guardrails.yaml`:
 - **Acceptance** — modeled as node **exit gates**; a failing gate drives the
   bounded-retry path.
 
-Known demo requirements resolve to deterministic profiles in mock/replay mode.
-Those profiles drive requirement-specific architecture, a validated cumulative
-target-app template, and exact pytest node IDs. The tester records real pytest
-and JUnit results; unsupported offline requirements safe-stop instead of
-reporting fabricated success. Live mode may generate source, but syntax-invalid
-output is rejected before atomic replacement of the existing application.
+The tester records real pytest and JUnit results. LLM-generated source is
+syntax-checked before it can atomically replace the existing application; an
+invalid response is rejected.
 
 ```bash
-make test
+docker compose build orchestrator
+docker compose run --rm orchestrator sh -c "pip install -e '.[dev]' && pytest"
 ```
 
 ---
 
-## Reliability & LLM modes
+## LLM and repository configuration
 
-`LLM_MODE` isolates all model calls (see `.env`):
+Set `LLM_MODE=live`, then configure `LLM_PROVIDER`, `LLM_MODEL`, and
+`LLM_API_KEY` in `.env`. The selected model name must be available to the API
+key for the chosen provider. The implementer uses that model to rewrite
+`target-app/main.py` from the approved design; generated code is accepted only
+after validation succeeds.
 
-| Mode | Behavior |
-|------|----------|
-| `mock` | Canned, offline, deterministic (default — demo-safe) |
-| `replay` | Reuse cached agent outputs from a prior run |
-| `live` | Real provider calls (`anthropic`/`openai`); the implementer asks the model to rewrite `target-app/main.py` from the approved design, falling back to the known-good hardcoded implementation if the call errors or the response isn't valid code |
-
-This keeps `make demo` runnable with **no key and no network**, and doubles as a
-reproducibility feature.
-
-`live` mode needs `LLM_API_KEY` set in `.env` (`LLM_PROVIDER`/`LLM_MODEL` pick the
-provider + model). Other agents still call the LLM for rationale text but keep
-deterministic, templated artifacts — only the implementer's generated code is
-LLM-authored, and only when the call succeeds.
+Set `GITHUB_TOKEN` to a fine-grained token scoped to the target repository with
+**Contents: write** and **Pull requests: write** permissions. By default, the
+workflow publishes through `origin` from the current branch. Use
+`SOURCE_REPO_PATH`, `GIT_REMOTE_NAME`, or `GIT_BASE_BRANCH` when repository
+discovery needs an explicit override.
 
 ---
 
@@ -252,11 +251,9 @@ LLM-authored, and only when the call succeeds.
 
 - **Custom engine over a framework (LangGraph, etc.):** chosen for explainability
   and defensibility of the control flow, at the cost of some built-in features.
-- **Mock agents by default:** artifacts are representative, not LLM-authored,
-  unless `LLM_MODE=live` — and even then only the implementer's
-  `target-app/main.py` is LLM-authored; other agents' artifacts stay
-  deterministic/templated so they remain reviewable. This is a deliberate
-  demo-reliability trade-off.
+- **Selective LLM authorship:** only the implementer's `target-app/main.py` is
+  LLM-authored; other agents keep deterministic, templated artifacts so they
+  remain reviewable.
 - **In-memory rate limiting** in the target app is per-process (fine for a
   prototype; use Redis for multi-instance).
 - **Re-planning** resets/re-runs affected nodes rather than diffing artifacts —
@@ -278,21 +275,19 @@ agentic-sdlc/
 ├── target-app/     # the URL shortener (FastAPI + SQLite)
 ├── workspace/      # governance.db + seed fixtures + per-run state/artifacts/audit/metrics
 ├── pyproject.toml  # deps + console entrypoints (orchestrator, dashboard)
-├── Makefile        # setup / run / demo / dashboard / test
 └── docker-compose.yml
 ```
 
 ---
 
-## Setup (Docker, clean-room path)
+## Docker operations
 
-Guarantees the prototype runs regardless of host machine/Python version — no
-local venv needed. Native `make setup && make demo` remains the primary path;
-Docker is insurance. Normal startup launches only the dashboard and target app;
+Docker runs the prototype without requiring a host Python installation or local
+virtual environment. Normal startup launches only the dashboard and target app;
 orchestration remains a deliberate, manually invoked action.
 
 ```bash
-docker compose up      # dashboard(:8000) + target-app(:8080)
+docker compose up --build -d      # dashboard(:8000) + target-app(:8080)
 ```
 
 One image (`agentic-sdlc:latest`) is built and run as three services:
@@ -325,9 +320,9 @@ docker compose down
 docker compose down -v
 ```
 
-**Live LLM mode in Docker:** set `LLM_MODE=live` and `LLM_API_KEY=...` in `.env`
-(`env_file: .env` wires it into the `orchestrator` and `dashboard` services).
-Set `GITHUB_TOKEN` in the same file to enable the dashboard's Implement action.
+**Credentials in Docker:** set `LLM_MODE=live`, `LLM_PROVIDER`, `LLM_MODEL`,
+`LLM_API_KEY`, and `GITHUB_TOKEN` in `.env` (`env_file: .env` wires them into
+the `orchestrator` and `dashboard` services).
 Compose mounts this checkout read-only at `/source-repo`; generated branches are
 built in the persistent workspace clone and pushed through the configured remote.
 `target-app` is bind-mounted (`./target-app:/app/target-app`), so code the

@@ -20,7 +20,9 @@ COPY workspace/requirements ./workspace/requirements
 
 RUN mkdir -p ./workspace/runs
 
-RUN pip install --upgrade pip && pip install -e ".[live]"
+# pytest is a runtime dependency here, not just a dev tool: the tester agent
+# shells out to `python -m pytest` inside this container to verify acceptance criteria.
+RUN pip install --upgrade pip && pip install -e ".[live]" && pip install "pytest>=8.0"
 
 # Default to offline-safe mode inside the container.
 ENV LLM_MODE=mock

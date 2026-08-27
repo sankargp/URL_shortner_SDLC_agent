@@ -286,6 +286,46 @@ def test_batch_rejects_changed_payload_for_key(harness):
     assert _link_count(harness) == 1
 
 
+@pytest.mark.profile_preview
+def test_preview_returns_link_metadata(harness):
+    created = harness.client.post(
+        "/shorten",
+        json={"url": "https://preview.example", "password": "s3cret"},
+    )
+    code = created.json()["code"]
+
+    preview = harness.client.get(f"/{code}/preview")
+
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["code"] == code
+    assert body["url"] == "https://preview.example/"
+    assert body["clicks"] == 0
+    assert body["expires_at"] is None
+    assert body["password_protected"] is True
+
+
+@pytest.mark.profile_preview
+def test_preview_does_not_redirect_or_increment_clicks(harness):
+    created = harness.client.post("/shorten", json={"url": "https://noclick.example"})
+    code = created.json()["code"]
+
+    first = harness.client.get(f"/{code}/preview", follow_redirects=False)
+    second = harness.client.get(f"/{code}/preview", follow_redirects=False)
+    stats = harness.client.get(f"/{code}/stats")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert stats.json()["clicks"] == 0
+
+
+@pytest.mark.profile_preview
+def test_preview_unknown_code_returns_404(harness):
+    response = harness.client.get("/does-not-exist/preview")
+
+    assert response.status_code == 404
+
+
 @pytest.mark.profile_bulk
 def test_batch_requires_key_and_bounds_item_count(harness):
     missing_key = harness.client.post(

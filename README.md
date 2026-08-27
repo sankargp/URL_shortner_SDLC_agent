@@ -10,6 +10,12 @@ enhances is a **URL shortener**.
 
 ---
 
+## Demo
+
+[![Watch the demo video](https://img.youtube.com/vi/rRO302xr3LM/0.jpg)](https://youtu.be/rRO302xr3LM)
+
+---
+
 ## Quick start (Docker)
 
 ```bash
